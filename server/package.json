@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node tests/verify.test.js && node tests/server-integration.test.js"
+    "test": "node tests/verify.test.js && node tests/server-integration.test.js && node tests/vercel-function.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

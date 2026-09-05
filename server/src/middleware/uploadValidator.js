@@ -6,9 +6,14 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const uploadDir = path.resolve(__dirname, '../../uploads');
+const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const uploadDir = process.env.UPLOAD_DIR || (isVercel ? '/tmp/medlens-uploads' : path.resolve(__dirname, '../../uploads'));
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  } catch (e) {
+    console.warn('[UploadValidator] Error creating upload directory, fallback to /tmp:', e.message);
+  }
 }
 
 // Allowed MIME types and extensions

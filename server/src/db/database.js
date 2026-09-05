@@ -6,12 +6,17 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const dataDir = path.resolve(__dirname, '../../data');
+const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const dataDir = process.env.DB_DIR || (isVercel ? '/tmp/medlens-data' : path.resolve(__dirname, '../../data'));
 if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+  } catch (e) {
+    console.warn('[Database] Error creating data directory, fallback to /tmp:', e.message);
+  }
 }
 
-const dbPath = path.join(dataDir, 'medlens.sqlite');
+const dbPath = process.env.DB_PATH || path.join(dataDir, 'medlens.sqlite');
 export const db = new DatabaseSync(dbPath);
 
 // Initialize Tables
