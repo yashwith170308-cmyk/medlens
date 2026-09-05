@@ -1,0 +1,48 @@
+# Environment & Secrets
+.env
+.env.*
+!.env.example
+
+# Node Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Production Build Artifacts
+dist/
+build/
+client/dist/
+
+# Test & Coverage
+coverage/
+*.lcov
+
+# Operating System & IDE Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Local SQLite Database Files
+server/data/*.sqlite
+server/data/*.sqlite-journal
+server/data/*.sqlite3
+server/data/*.db
+server/data/*.db-journal
+!server/data/.gitkeep
+
+# Uploaded Files & Temporary Storage
+server/uploads/*
+!server/uploads/.gitkeep
+*.tmp
+
+# Vite & Framework Cache
+.vite/
+.eslintcache
