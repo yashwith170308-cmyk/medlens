@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Lock, AlertTriangle, Trash2, Key, Activity, Clock, ShieldAlert } from 'lucide-react';
+import { ShieldCheck, Trash2, Clock, ShieldAlert } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function AuditSecurityView() {

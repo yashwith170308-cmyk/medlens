@@ -26,6 +26,31 @@ export const AUDIT_ACTIONS = {
   LOAD_DEMO: 'LOAD_DEMO'
 };
 
+let insertStmt = null;
+let queryStmt = null;
+
+function getInsertStmt() {
+  if (!insertStmt) {
+    insertStmt = db.prepare(`
+      INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, ip_address, details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+  }
+  return insertStmt;
+}
+
+function getQueryStmt() {
+  if (!queryStmt) {
+    queryStmt = db.prepare(`
+      SELECT id, user_id, action, resource_type, resource_id, ip_address, details, created_at
+      FROM audit_logs
+      ORDER BY created_at DESC
+      LIMIT ?
+    `);
+  }
+  return queryStmt;
+}
+
 /**
  * Logs an audit event to SQLite database.
  * 
@@ -40,11 +65,7 @@ export const AUDIT_ACTIONS = {
 export function logAuditEvent({ action, userId = 'clinician-1', resourceType, resourceId = null, details = '', ipAddress = '127.0.0.1' }) {
   try {
     const id = `audit-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    const stmt = db.prepare(`
-      INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, ip_address, details, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    `);
-    stmt.run(id, userId, action, resourceType, resourceId, ipAddress, details);
+    getInsertStmt().run(id, userId, action, resourceType, resourceId, ipAddress, details);
     return id;
   } catch (err) {
     console.error('[AuditLogger] Failed to write audit event:', err.message);
@@ -59,13 +80,7 @@ export function logAuditEvent({ action, userId = 'clinician-1', resourceType, re
  */
 export function getAuditLogs(limit = 50) {
   try {
-    const stmt = db.prepare(`
-      SELECT id, user_id, action, resource_type, resource_id, ip_address, details, created_at
-      FROM audit_logs
-      ORDER BY created_at DESC
-      LIMIT ?
-    `);
-    return stmt.all(limit);
+    return getQueryStmt().all(limit);
   } catch (err) {
     console.error('[AuditLogger] Failed to query audit logs:', err.message);
     return [];

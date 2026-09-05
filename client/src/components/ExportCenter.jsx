@@ -1,5 +1,5 @@
 import React from 'react';
-import { Download, FileText, FileSpreadsheet, Printer, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Download, FileText, FileSpreadsheet, Printer } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 import { usePrivacy } from '../context/PrivacyContext';
 

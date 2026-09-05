@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, Shield, ShieldOff, Database, UserCheck, AlertCircle } from 'lucide-react';
+import { Activity, Shield, ShieldOff, Database, AlertCircle } from 'lucide-react';
 import { usePrivacy } from '../context/PrivacyContext';
 import { usePatient } from '../context/PatientContext';
 

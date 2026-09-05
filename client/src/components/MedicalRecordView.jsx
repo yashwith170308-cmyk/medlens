@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   FileText,
   CheckCircle2,
@@ -9,7 +9,6 @@ import {
   Eye,
   Check,
   Edit3,
-  Filter,
   Search,
   User,
   ShieldCheck
@@ -26,28 +25,30 @@ export default function MedicalRecordView({ onOpenEvidence, onOpenReview, mode =
   const [verificationFilter, setVerificationFilter] = useState(mode === 'review' ? 'UNVERIFIED' : 'ALL');
 
   const currentLabs = recordData?.currentResults || [];
-  const previousLabs = recordData?.previousResults || [];
-  const reports = recordData?.reports || [];
 
-  // Filter laboratory results
-  const filteredResults = currentLabs.filter((item) => {
-    const matchesSearch =
-      item.canonical_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.raw_test_name.toLowerCase().includes(searchTerm.toLowerCase());
+  // Filter laboratory results (memoized to avoid recalculating on unrelated parent renders)
+  const filteredResults = useMemo(() => {
+    const term = searchTerm.toLowerCase();
+    return currentLabs.filter((item) => {
+      const matchesSearch =
+        !term ||
+        item.canonical_name.toLowerCase().includes(term) ||
+        item.raw_test_name.toLowerCase().includes(term);
 
-    const matchesStatus =
-      statusFilter === 'ALL' ||
-      (statusFilter === 'ABNORMAL' && (item.status === 'Below reported range' || item.status === 'Above reported range')) ||
-      (statusFilter === 'NORMAL' && item.status === 'Within reported range') ||
-      (statusFilter === 'UNDETERMINED' && item.status === 'Not determined');
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        (statusFilter === 'ABNORMAL' && (item.status === 'Below reported range' || item.status === 'Above reported range')) ||
+        (statusFilter === 'NORMAL' && item.status === 'Within reported range') ||
+        (statusFilter === 'UNDETERMINED' && item.status === 'Not determined');
 
-    const matchesVerification =
-      verificationFilter === 'ALL' ||
-      (verificationFilter === 'VERIFIED' && item.verification_status === 'Human-verified') ||
-      (verificationFilter === 'UNVERIFIED' && item.verification_status === 'Requires verification');
+      const matchesVerification =
+        verificationFilter === 'ALL' ||
+        (verificationFilter === 'VERIFIED' && item.verification_status === 'Human-verified') ||
+        (verificationFilter === 'UNVERIFIED' && item.verification_status === 'Requires verification');
 
-    return matchesSearch && matchesStatus && matchesVerification;
-  });
+      return matchesSearch && matchesStatus && matchesVerification;
+    });
+  }, [currentLabs, searchTerm, statusFilter, verificationFilter]);
 
   return (
     <div className="space-y-6">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Eye, ArrowRight, ShieldCheck, Sparkles, Database, FileText, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, Database, FileText } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function EvidenceModeView() {

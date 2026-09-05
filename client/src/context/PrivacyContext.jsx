@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 const PrivacyContext = createContext();
 
@@ -11,10 +11,10 @@ export function PrivacyProvider({ children }) {
     localStorage.setItem('medlens_privacy_mode', privacyMode ? 'true' : 'false');
   }, [privacyMode]);
 
-  const togglePrivacyMode = () => setPrivacyMode(prev => !prev);
+  const togglePrivacyMode = useCallback(() => setPrivacyMode(prev => !prev), []);
 
   // Anonymization helper
-  const maskName = (name) => {
+  const maskName = useCallback((name) => {
     if (!name) return '';
     if (!privacyMode) return name;
     
@@ -24,17 +24,24 @@ export function PrivacyProvider({ children }) {
     const parts = clean.split(/\s+/);
     const maskedParts = parts.map(p => p.charAt(0) + '***');
     return maskedParts.join(' ') + (isDemo ? ' (DEMO)' : '');
-  };
+  }, [privacyMode]);
 
-  const maskIdentifier = (id) => {
+  const maskIdentifier = useCallback((id) => {
     if (!id) return '';
     if (!privacyMode) return id;
     if (id.length <= 4) return '****';
     return id.substring(0, 3) + '-****';
-  };
+  }, [privacyMode]);
+
+  const contextValue = useMemo(() => ({
+    privacyMode,
+    togglePrivacyMode,
+    maskName,
+    maskIdentifier
+  }), [privacyMode, togglePrivacyMode, maskName, maskIdentifier]);
 
   return (
-    <PrivacyContext.Provider value={{ privacyMode, togglePrivacyMode, maskName, maskIdentifier }}>
+    <PrivacyContext.Provider value={contextValue}>
       {children}
     </PrivacyContext.Provider>
   );

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 const PatientContext = createContext();
 
@@ -10,10 +10,10 @@ export function PatientProvider({ children }) {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [toastMessage, setToastMessage] = useState(null);
 
-  const showToast = (msg, type = 'success') => {
+  const showToast = useCallback((msg, type = 'success') => {
     setToastMessage({ msg, type });
     setTimeout(() => setToastMessage(null), 4000);
-  };
+  }, []);
 
   const fetchRecord = useCallback(async (patientId) => {
     if (!patientId) return;
@@ -47,7 +47,7 @@ export function PatientProvider({ children }) {
     }
   }, [fetchRecord]);
 
-  const loadDemoPatient = async () => {
+  const loadDemoPatient = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/patient/demo', { method: 'POST' });
@@ -62,33 +62,46 @@ export function PatientProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchRecord, showToast]);
 
-  const refreshRecord = async () => {
+  const refreshRecord = useCallback(async () => {
     if (patient?.id) {
       await fetchRecord(patient.id);
     }
-  };
+  }, [patient?.id, fetchRecord]);
 
   useEffect(() => {
     fetchCurrentPatient();
   }, [fetchCurrentPatient]);
 
+  const contextValue = useMemo(() => ({
+    patient,
+    setPatient,
+    recordData,
+    loading,
+    error,
+    activeTab,
+    setActiveTab,
+    loadDemoPatient,
+    refreshRecord,
+    fetchCurrentPatient,
+    showToast,
+    toastMessage
+  }), [
+    patient,
+    recordData,
+    loading,
+    error,
+    activeTab,
+    loadDemoPatient,
+    refreshRecord,
+    fetchCurrentPatient,
+    showToast,
+    toastMessage
+  ]);
+
   return (
-    <PatientContext.Provider value={{
-      patient,
-      setPatient,
-      recordData,
-      loading,
-      error,
-      activeTab,
-      setActiveTab,
-      loadDemoPatient,
-      refreshRecord,
-      fetchCurrentPatient,
-      showToast,
-      toastMessage
-    }}>
+    <PatientContext.Provider value={contextValue}>
       {children}
     </PatientContext.Provider>
   );

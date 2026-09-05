@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { User, Save, PlusCircle, AlertCircle, CheckCircle } from 'lucide-react';
+import { User, Save, PlusCircle, CheckCircle } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 import { usePrivacy } from '../context/PrivacyContext';
 
 export default function PatientIntake() {
-  const { patient, refreshRecord, fetchCurrentPatient, showToast } = usePatient();
+  const { patient, fetchCurrentPatient, showToast } = usePatient();
   const { maskName } = usePrivacy();
 
   const [formData, setFormData] = useState({
@@ -60,7 +60,6 @@ export default function PatientIntake() {
       const data = await res.json();
       setSaveSuccess(true);
       showToast('Patient intake information saved successfully!', 'success');
-      await refreshRecord();
       await fetchCurrentPatient();
     } catch (err) {
       console.error(err);

@@ -6,6 +6,31 @@ import { evaluateReferenceRange } from './referenceRangeAnalyzer.js';
  */
 const UNIT_REGEX_STR = '(?:g\\/dL|g\\/dl|gm\\/dl|\\/µL|\\/uL|\\/mm3|cells\\/cu\\.mm|cu\\.mm|\\%|mg\\/dL|mg\\/dl|mmol\\/L|µmol\\/L|umol\\/L|mIU\\/L|uIU\\/mL|pg|fl|fL|ng\\/mL|µg\\/dL|ug\\/dL|mm\\/hr|U\\/L|IU\\/L|mEq\\/L)';
 
+const DATE_PATTERNS = [
+  /(?:report\s+date|date\s+of\s+collection|collection\s+date|date)\s*[:\-]?\s*([0-9]{1,2}[\/\-\.][0-9]{1,2}[\/\-\.][0-9]{2,4})/i,
+  /(?:report\s+date|date)\s*[:\-]?\s*([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2})/i,
+  /(?:report\s+date|date)\s*[:\-]?\s*([A-Za-z]{3,9}\s+[0-9]{1,2},?\s+[0-9]{4})/i,
+  /([0-9]{1,2}\s+[A-Za-z]{3,9}\s+[0-9]{4})/i
+];
+
+const OBSERVATION_START_REGEX = /(?:impression|interpretation|clinical\s+notes?|comments?|remarks?|observation|findings?)\s*[:\-]/i;
+const SECTION_CHANGE_REGEX = /^[A-Z\s]{4,}:/i;
+const SECTION_NOTES_KEYWORD_REGEX = /(?:note|comment|impression|interpretation)/i;
+
+const HEADER_LINE_REGEX_1 = /^(test\s+name|parameter|investigation|test|analyte)\b/i;
+const HEADER_LINE_REGEX_2 = /^(patient\s+name|doctor|clinic|hospital|age|gender|sex|date)\b/i;
+const NON_TEST_PARAM_REGEX = /^(page|room|sample|specimen|lab|id|mrn|visit|doctor|dr|patient|bill|reg|token|age|phone|sl|s\.no)$/i;
+
+const LINE_REGEX = new RegExp(
+  `^([A-Za-z0-9\\+\\/\\-\\s\\.]{2,35}?)\\s*[:\\.]*\\s+` + // Test name
+  `([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*` +             // Observed numeric value
+  `(${UNIT_REGEX_STR})?\\s*` +                             // Optional unit
+  `(?:(?:ref(?:erence)?\\s*(?:range)?|normal)?\\s*[:\\(]?\\s*` + 
+  `((?:<|<=|>|>=|≤|≥|up\\s+to\\s+)?[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?\\s*(?:-|–|—|to)\\s*[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?|(?:<|<=|>|>=|≤|≥|up\\s+to|less\\s+than|greater\\s+than)\\s*[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)` + // Reference range
+  `\\s*\\)?)?`, 
+  'i'
+);
+
 /**
  * Extracts report date from raw text.
  * @param {string} text 
@@ -14,16 +39,8 @@ const UNIT_REGEX_STR = '(?:g\\/dL|g\\/dl|gm\\/dl|\\/µL|\\/uL|\\/mm3|cells\\/cu\
 export function extractReportDate(text) {
   if (!text) return null;
 
-  // e.g. "Date: 2024-05-12", "Report Date: 12/05/2024", "Collected: May 12, 2024"
-  const datePatterns = [
-    /(?:report\s+date|date\s+of\s+collection|collection\s+date|date)\s*[:\-]?\s*([0-9]{1,2}[\/\-\.][0-9]{1,2}[\/\-\.][0-9]{2,4})/i,
-    /(?:report\s+date|date)\s*[:\-]?\s*([0-9]{4}[\/\-][0-9]{1,2}[\/\-][0-9]{1,2})/i,
-    /(?:report\s+date|date)\s*[:\-]?\s*([A-Za-z]{3,9}\s+[0-9]{1,2},?\s+[0-9]{4})/i,
-    /([0-9]{1,2}\s+[A-Za-z]{3,9}\s+[0-9]{4})/i
-  ];
-
-  for (const pattern of datePatterns) {
-    const match = text.match(pattern);
+  for (let i = 0; i < DATE_PATTERNS.length; i++) {
+    const match = text.match(DATE_PATTERNS[i]);
     if (match && match[1]) {
       return match[1].trim();
     }
@@ -67,7 +84,7 @@ export function extractObservations(text) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    if (/(?:impression|interpretation|clinical\s+notes?|comments?|remarks?|observation|findings?)\s*[:\-]/i.test(trimmed)) {
+    if (OBSERVATION_START_REGEX.test(trimmed)) {
       capturingNotes = true;
       buffer.push(trimmed);
       continue;
@@ -75,7 +92,7 @@ export function extractObservations(text) {
 
     if (capturingNotes) {
       // Check if entering a new section
-      if (/^[A-Z\s]{4,}:/i.test(trimmed) && !/(?:note|comment|impression|interpretation)/i.test(trimmed)) {
+      if (SECTION_CHANGE_REGEX.test(trimmed) && !SECTION_NOTES_KEYWORD_REGEX.test(trimmed)) {
         capturingNotes = false;
         if (buffer.length) {
           observations.push(buffer.join(' '));
@@ -121,8 +138,8 @@ export function extractLabResults(text, reportFilename = 'Report.txt', sourcePag
     if (!trimmed || trimmed.length < 3) continue;
 
     // Skip header lines
-    if (/^(test\s+name|parameter|investigation|test|analyte)\b/i.test(trimmed)) continue;
-    if (/^(patient\s+name|doctor|clinic|hospital|age|gender|sex|date)\b/i.test(trimmed)) continue;
+    if (HEADER_LINE_REGEX_1.test(trimmed)) continue;
+    if (HEADER_LINE_REGEX_2.test(trimmed)) continue;
 
     let matched = false;
 
@@ -163,23 +180,7 @@ export function extractLabResults(text, reportFilename = 'Report.txt', sourcePag
     if (matched) continue;
 
     // Pattern B: Regex for Test Name followed by Value, optional Unit, and optional Reference Range
-    // Supports:
-    // "Hemoglobin 10.2 g/dL 13-17"
-    // "WBC Count: 8,100 /µL (4000 - 10000)"
-    // "Fasting Blood Sugar: 145 mg/dL Ref: 70 - 99"
-    // "ESR 22 mm/hr" (No reference range)
-    // "Total Cholesterol 220 mg/dL (< 200)"
-    const lineRegex = new RegExp(
-      `^([A-Za-z0-9\\+\\/\\-\\s\\.]{2,35}?)\\s*[:\\.]*\\s+` + // Test name
-      `([0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)\\s*` +             // Observed numeric value
-      `(${UNIT_REGEX_STR})?\\s*` +                             // Optional unit
-      `(?:(?:ref(?:erence)?\\s*(?:range)?|normal)?\\s*[:\\(]?\\s*` + 
-      `((?:<|<=|>|>=|≤|≥|up\\s+to\\s+)?[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?\\s*(?:-|–|—|to)\\s*[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?|(?:<|<=|>|>=|≤|≥|up\\s+to|less\\s+than|greater\\s+than)\\s*[0-9]+(?:,[0-9]{3})*(?:\\.[0-9]+)?)` + // Reference range
-      `\\s*\\)?)?`, 
-      'i'
-    );
-
-    const lineMatch = trimmed.match(lineRegex);
+    const lineMatch = trimmed.match(LINE_REGEX);
     if (lineMatch) {
       const rawTest = lineMatch[1].trim().replace(/[:\.\-]+$/, '');
       const rawVal = lineMatch[2].trim();
@@ -187,7 +188,7 @@ export function extractLabResults(text, reportFilename = 'Report.txt', sourcePag
       const rawRange = lineMatch[4] ? lineMatch[4].trim() : null;
 
       // Filter out non-test false positives (e.g. "Page 1", "Room 402", "Sample 12")
-      if (!/^(page|room|sample|specimen|lab|id|mrn|visit|doctor|dr|patient|bill|reg|token|age|phone|sl|s\.no)$/i.test(rawTest)) {
+      if (!NON_TEST_PARAM_REGEX.test(rawTest)) {
         const { canonicalName } = normalizeTestName(rawTest);
         const evalResult = evaluateReferenceRange(rawVal, rawRange);
 

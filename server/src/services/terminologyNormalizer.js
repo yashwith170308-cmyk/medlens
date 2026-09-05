@@ -137,6 +137,8 @@ const SYNONYM_MAP = {
   'ft4': 'Free T4'
 };
 
+const SYNONYM_ENTRIES = Object.entries(SYNONYM_MAP);
+
 /**
  * Normalizes a raw medical test name to its canonical standard name.
  * @param {string} rawName 
@@ -157,7 +159,8 @@ export function normalizeTestName(rawName) {
   }
 
   // Check prefix or contains matches for common clinical terms
-  for (const [synonym, canonical] of Object.entries(SYNONYM_MAP)) {
+  for (let i = 0; i < SYNONYM_ENTRIES.length; i++) {
+    const [synonym, canonical] = SYNONYM_ENTRIES[i];
     if (cleaned === synonym || cleaned.startsWith(synonym + ' ') || cleaned.endsWith(' ' + synonym)) {
       return { canonicalName: canonical, isStandardized: true };
     }

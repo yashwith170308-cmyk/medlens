@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   LayoutDashboard,
   UserPlus,
@@ -20,27 +20,29 @@ import { usePatient } from '../context/PatientContext';
 export default function Sidebar() {
   const { activeTab, setActiveTab, recordData } = usePatient();
 
-  const unresolvedConflicts = recordData?.conflicts?.filter(c => c.status === 'Unresolved')?.length || 0;
-  const pendingClarifications = recordData?.clarifications?.filter(c => !c.user_response)?.length || 0;
-  const requiresVerification = recordData?.stats?.requiresVerificationCount || 0;
-  const varianceCount = (recordData?.stats?.belowRangeCount || 0) + (recordData?.stats?.aboveRangeCount || 0);
+  const navItems = useMemo(() => {
+    const unresolvedConflicts = recordData?.conflicts?.filter(c => c.status === 'Unresolved')?.length || 0;
+    const pendingClarifications = recordData?.clarifications?.filter(c => !c.user_response)?.length || 0;
+    const requiresVerification = recordData?.stats?.requiresVerificationCount || 0;
+    const varianceCount = (recordData?.stats?.belowRangeCount || 0) + (recordData?.stats?.aboveRangeCount || 0);
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard & AI Summary', icon: LayoutDashboard },
-    { id: 'intake', label: 'Patient Intake', icon: UserPlus },
-    { id: 'upload', label: 'Report Upload & Paste', icon: UploadCloud },
-    { id: 'reports', label: 'Reports & Categorization', icon: Files, badge: recordData?.reports?.length },
-    { id: 'record', label: 'Structured Medical Record', icon: FileText },
-    { id: 'ranges', label: 'Reference Range Analysis', icon: CheckCircle2, badge: varianceCount > 0 ? `${varianceCount} flags` : null, badgeColor: 'bg-amber-100 text-amber-800' },
-    { id: 'review', label: 'Human Review Center', icon: Edit3, badge: requiresVerification ? `${requiresVerification} pending` : null, badgeColor: 'bg-clinical-100 text-clinical-800' },
-    { id: 'compare', label: 'Longitudinal Comparison', icon: ArrowLeftRight },
-    { id: 'conflicts', label: 'Conflict Detection', icon: AlertTriangle, badge: unresolvedConflicts > 0 ? `${unresolvedConflicts} alert` : null, badgeColor: 'bg-rose-100 text-rose-800' },
-    { id: 'clarifications', label: 'Clarification Questions', icon: HelpCircle, badge: pendingClarifications > 0 ? `${pendingClarifications} new` : null, badgeColor: 'bg-indigo-100 text-indigo-800' },
-    { id: 'evidence', label: 'Evidence Mode (3-Tier)', icon: Eye },
-    { id: 'timeline', label: 'Medical Timeline', icon: Clock },
-    { id: 'export', label: 'Export Center', icon: Download },
-    { id: 'audit', label: 'Audit & Security', icon: ShieldCheck }
-  ];
+    return [
+      { id: 'dashboard', label: 'Dashboard & AI Summary', icon: LayoutDashboard },
+      { id: 'intake', label: 'Patient Intake', icon: UserPlus },
+      { id: 'upload', label: 'Report Upload & Paste', icon: UploadCloud },
+      { id: 'reports', label: 'Reports & Categorization', icon: Files, badge: recordData?.reports?.length },
+      { id: 'record', label: 'Structured Medical Record', icon: FileText },
+      { id: 'ranges', label: 'Reference Range Analysis', icon: CheckCircle2, badge: varianceCount > 0 ? `${varianceCount} flags` : null, badgeColor: 'bg-amber-100 text-amber-800' },
+      { id: 'review', label: 'Human Review Center', icon: Edit3, badge: requiresVerification ? `${requiresVerification} pending` : null, badgeColor: 'bg-clinical-100 text-clinical-800' },
+      { id: 'compare', label: 'Longitudinal Comparison', icon: ArrowLeftRight },
+      { id: 'conflicts', label: 'Conflict Detection', icon: AlertTriangle, badge: unresolvedConflicts > 0 ? `${unresolvedConflicts} alert` : null, badgeColor: 'bg-rose-100 text-rose-800' },
+      { id: 'clarifications', label: 'Clarification Questions', icon: HelpCircle, badge: pendingClarifications > 0 ? `${pendingClarifications} new` : null, badgeColor: 'bg-indigo-100 text-indigo-800' },
+      { id: 'evidence', label: 'Evidence Mode (3-Tier)', icon: Eye },
+      { id: 'timeline', label: 'Medical Timeline', icon: Clock },
+      { id: 'export', label: 'Export Center', icon: Download },
+      { id: 'audit', label: 'Audit & Security', icon: ShieldCheck }
+    ];
+  }, [recordData]);
 
   return (
     <aside className="w-64 bg-white border-r border-slate-200 flex flex-col flex-shrink-0 min-h-[calc(100vh-4rem)] no-print">

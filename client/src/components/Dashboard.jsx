@@ -2,7 +2,6 @@ import React from 'react';
 import {
   User,
   FileText,
-  AlertTriangle,
   CheckCircle2,
   AlertCircle,
   HelpCircle,

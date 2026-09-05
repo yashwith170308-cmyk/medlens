@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, FileText, CheckCircle2, Shield, Eye, Calendar, Hash } from 'lucide-react';
+import { X, FileText, Eye, Hash } from 'lucide-react';
 
 export default function SourceEvidenceModal({ item, onClose }) {
   if (!item) return null;

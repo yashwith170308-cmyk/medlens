@@ -9,10 +9,44 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../services/auditLogger.js';
 
 const router = express.Router();
 
+// Cached prepared statements
+let stmts = null;
+function getStatements() {
+  if (!stmts) {
+    stmts = {
+      getReportsByPatient: db.prepare('SELECT * FROM reports WHERE patient_id = ? ORDER BY created_at DESC'),
+      getPatientById: db.prepare('SELECT * FROM patients WHERE id = ?'),
+      insertReport: db.prepare(`
+        INSERT INTO reports (id, patient_id, filename, category, report_date, raw_text, file_type, is_previous, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `),
+      insertResult: db.prepare(`
+        INSERT INTO lab_results (id, report_id, patient_id, canonical_name, raw_test_name, observed_value, value_text, unit, reference_range_raw, range_low, range_high, status, source_type, source_page, source_snippet, verification_status, verified_by, verified_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI-extracted', 1, ?, 'Requires verification', NULL, NULL, datetime('now'))
+      `),
+      getAllReportsForPatient: db.prepare('SELECT * FROM reports WHERE patient_id = ?'),
+      getAllResultsForPatient: db.prepare('SELECT * FROM lab_results WHERE patient_id = ?'),
+      insertConflict: db.prepare(`
+        INSERT OR IGNORE INTO conflicts (id, patient_id, title, description, source_a, source_b, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'Unresolved', datetime('now'))
+      `),
+      insertClarification: db.prepare(`
+        INSERT OR IGNORE INTO clarifications (id, patient_id, question, context_field, user_response, created_at)
+        VALUES (?, ?, ?, ?, '', datetime('now'))
+      `),
+      getReportById: db.prepare('SELECT * FROM reports WHERE id = ?'),
+      deleteLabResultsByReportId: db.prepare('DELETE FROM lab_results WHERE report_id = ?'),
+      deleteReportById: db.prepare('DELETE FROM reports WHERE id = ?')
+    };
+  }
+  return stmts;
+}
+
 // GET all reports for a patient
 router.get('/patient/:patientId', (req, res) => {
   try {
-    const reports = db.prepare('SELECT * FROM reports WHERE patient_id = ? ORDER BY created_at DESC').all(req.params.patientId);
+    const s = getStatements();
+    const reports = s.getReportsByPatient.all(req.params.patientId);
     res.json({ reports });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -25,7 +59,8 @@ async function processReportPipeline({ patientId, filename, rawText, fileType, i
   if (!patientId) throw new Error('Patient ID is required.');
   if (!rawText || !rawText.trim()) throw new Error('Report text is empty or could not be extracted.');
 
-  const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId);
+  const s = getStatements();
+  const patient = s.getPatientById.get(patientId);
   if (!patient) throw new Error(`Patient with ID "${patientId}" does not exist.`);
 
   // Step 2: Extraction & Categorization
@@ -37,67 +72,78 @@ async function processReportPipeline({ patientId, filename, rawText, fileType, i
   const reportId = `rep-${Date.now()}-${Math.round(Math.random() * 1e4)}`;
   const extractedResults = extractLabResults(rawText, filename, 1);
 
-  // Step 5: Save Report
-  db.prepare(`
-    INSERT INTO reports (id, patient_id, filename, category, report_date, raw_text, file_type, is_previous, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-  `).run(
-    reportId,
-    patientId,
-    filename,
-    category,
-    reportDate,
-    rawText,
-    fileType,
-    isPrevious ? 1 : 0
-  );
-
-  // Step 6: Save Extracted Lab Results with Provenance
-  const insertResultStmt = db.prepare(`
-    INSERT INTO lab_results (id, report_id, patient_id, canonical_name, raw_test_name, observed_value, value_text, unit, reference_range_raw, range_low, range_high, status, source_type, source_page, source_snippet, verification_status, verified_by, verified_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AI-extracted', 1, ?, 'Requires verification', NULL, NULL, datetime('now'))
-  `);
-
-  for (const item of extractedResults) {
-    const resId = `res-${Date.now()}-${Math.round(Math.random() * 1e5)}`;
-    insertResultStmt.run(
-      resId,
+  // Step 5 & 6: Save Report and Extracted Results atomically in a single transaction
+  db.exec('BEGIN TRANSACTION;');
+  try {
+    s.insertReport.run(
       reportId,
       patientId,
-      item.canonicalName,
-      item.rawTestName,
-      item.observedValue,
-      item.valueText,
-      item.unit,
-      item.referenceRangeRaw,
-      item.rangeLow,
-      item.rangeHigh,
-      item.status,
-      item.sourceSnippet
+      filename,
+      category,
+      reportDate,
+      rawText,
+      fileType,
+      isPrevious ? 1 : 0
     );
+
+    for (let i = 0; i < extractedResults.length; i++) {
+      const item = extractedResults[i];
+      const resId = `res-${Date.now()}-${i}-${Math.round(Math.random() * 1e4)}`;
+      s.insertResult.run(
+        resId,
+        reportId,
+        patientId,
+        item.canonicalName,
+        item.rawTestName,
+        item.observedValue,
+        item.valueText,
+        item.unit,
+        item.referenceRangeRaw,
+        item.rangeLow,
+        item.rangeHigh,
+        item.status,
+        item.sourceSnippet
+      );
+    }
+    db.exec('COMMIT;');
+  } catch (txErr) {
+    db.exec('ROLLBACK;');
+    throw txErr;
   }
 
   // Step 7: Cross-source Conflict Detection
-  const allReports = db.prepare('SELECT * FROM reports WHERE patient_id = ?').all(patientId);
-  const allResults = db.prepare('SELECT * FROM lab_results WHERE patient_id = ?').all(patientId);
+  const allReports = s.getAllReportsForPatient.all(patientId);
+  const allResults = s.getAllResultsForPatient.all(patientId);
   const detectedConflicts = detectConflicts(patient, allReports, allResults);
 
-  const insertConflictStmt = db.prepare(`
-    INSERT OR IGNORE INTO conflicts (id, patient_id, title, description, source_a, source_b, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'Unresolved', datetime('now'))
-  `);
-  for (const conf of detectedConflicts) {
-    insertConflictStmt.run(conf.id, patientId, conf.title, conf.description, conf.sourceA, conf.sourceB);
+  if (detectedConflicts.length > 0) {
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      for (let i = 0; i < detectedConflicts.length; i++) {
+        const conf = detectedConflicts[i];
+        s.insertConflict.run(conf.id, patientId, conf.title, conf.description, conf.sourceA, conf.sourceB);
+      }
+      db.exec('COMMIT;');
+    } catch (confErr) {
+      db.exec('ROLLBACK;');
+      throw confErr;
+    }
   }
 
   // Step 8: Clarification Inquiry Generation
   const clarifications = generateClarificationQuestions(patient, allResults);
-  const insertClarifyStmt = db.prepare(`
-    INSERT OR IGNORE INTO clarifications (id, patient_id, question, context_field, user_response, created_at)
-    VALUES (?, ?, ?, ?, '', datetime('now'))
-  `);
-  for (const q of clarifications) {
-    insertClarifyStmt.run(q.id, patientId, q.question, q.contextField);
+  if (clarifications.length > 0) {
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      for (let i = 0; i < clarifications.length; i++) {
+        const q = clarifications[i];
+        s.insertClarification.run(q.id, patientId, q.question, q.contextField);
+      }
+      db.exec('COMMIT;');
+    } catch (clarifyErr) {
+      db.exec('ROLLBACK;');
+      throw clarifyErr;
+    }
   }
 
   logAuditEvent({
@@ -118,7 +164,7 @@ async function processReportPipeline({ patientId, filename, rawText, fileType, i
     pipelineStagesCompleted: [
       'Input Validation',
       'Clinical Entity Extraction',
-      'Validation & Range Check',
+      'Data Type & Value Validation',
       'Terminology Normalization',
       'Reference Range Analysis',
       'Conflict Detection',
@@ -183,13 +229,21 @@ router.post('/upload', uploadMiddleware.single('file'), async (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const reportId = req.params.id;
-    const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(reportId);
+    const s = getStatements();
+    const report = s.getReportById.get(reportId);
     if (!report) {
       return res.status(404).json({ error: 'Report not found' });
     }
 
-    db.prepare('DELETE FROM lab_results WHERE report_id = ?').run(reportId);
-    db.prepare('DELETE FROM reports WHERE id = ?').run(reportId);
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      s.deleteLabResultsByReportId.run(reportId);
+      s.deleteReportById.run(reportId);
+      db.exec('COMMIT;');
+    } catch (delErr) {
+      db.exec('ROLLBACK;');
+      throw delErr;
+    }
 
     logAuditEvent({
       action: AUDIT_ACTIONS.DELETE_REPORT,

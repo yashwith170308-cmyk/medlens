@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Files, FileText, Calendar, Trash2, Eye, Tag, PlusCircle } from 'lucide-react';
+import { Files, FileText, Trash2, Eye, PlusCircle } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function ReportsList({ onNavigate }) {

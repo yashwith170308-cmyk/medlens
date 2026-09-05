@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AlertTriangle, ShieldAlert, CheckCircle2, FileCheck, ArrowRight, MessageSquare, Clock } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, CheckCircle2, MessageSquare } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function ConflictCenter() {

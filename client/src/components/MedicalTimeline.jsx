@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Calendar, CheckCircle2, AlertTriangle, FileText, UserPlus, Activity } from 'lucide-react';
+import { Calendar, CheckCircle2, AlertTriangle, FileText, UserPlus } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function MedicalTimeline() {

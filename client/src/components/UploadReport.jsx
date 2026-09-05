@@ -65,11 +65,12 @@ export default function UploadReport({ onNavigate }) {
     setError(null);
     setExtractionResult(null);
 
-    // Simulate pipeline stage progression visually
-    for (let i = 0; i < pipelineStages.length; i++) {
-      setProcessingStage(pipelineStages[i]);
-      await new Promise(r => setTimeout(r, 200));
-    }
+    let currentStageIdx = 0;
+    setProcessingStage(pipelineStages[0]);
+    const stageInterval = setInterval(() => {
+      currentStageIdx = (currentStageIdx + 1) % pipelineStages.length;
+      setProcessingStage(pipelineStages[currentStageIdx]);
+    }, 120);
 
     try {
       const res = await fetch('/api/reports/paste', {
@@ -96,6 +97,7 @@ export default function UploadReport({ onNavigate }) {
       console.error(err);
       setError(err.message || 'An error occurred during report extraction.');
     } finally {
+      clearInterval(stageInterval);
       setProcessing(false);
       setProcessingStage(null);
     }
@@ -112,11 +114,12 @@ export default function UploadReport({ onNavigate }) {
     setError(null);
     setExtractionResult(null);
 
-    // Visual pipeline
-    for (let i = 0; i < pipelineStages.length; i++) {
-      setProcessingStage(pipelineStages[i]);
-      await new Promise(r => setTimeout(r, 250));
-    }
+    let currentStageIdx = 0;
+    setProcessingStage(pipelineStages[0]);
+    const stageInterval = setInterval(() => {
+      currentStageIdx = (currentStageIdx + 1) % pipelineStages.length;
+      setProcessingStage(pipelineStages[currentStageIdx]);
+    }, 120);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -142,6 +145,7 @@ export default function UploadReport({ onNavigate }) {
       console.error(err);
       setError(err.message || 'File upload failed.');
     } finally {
+      clearInterval(stageInterval);
       setProcessing(false);
       setProcessingStage(null);
     }

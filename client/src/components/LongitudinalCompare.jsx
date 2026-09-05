@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowLeftRight, ArrowUpRight, ArrowDownRight, Minus, AlertCircle, Info, Calendar, FileText } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { ArrowUpRight, ArrowDownRight, Minus, Info } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function LongitudinalCompare() {
@@ -10,10 +10,22 @@ export default function LongitudinalCompare() {
   const previousReport = reports.find(r => r.is_previous);
   const currentReport = reports.find(r => !r.is_previous);
 
-  const matchedItems = comparison.filter(c => c.previous && c.current);
-  const increasedCount = matchedItems.filter(c => c.direction === 'up').length;
-  const decreasedCount = matchedItems.filter(c => c.direction === 'down').length;
-  const stableCount = matchedItems.filter(c => c.direction === 'stable').length;
+  const { matchedItems, increasedCount, decreasedCount, stableCount } = useMemo(() => {
+    const matched = [];
+    let inc = 0;
+    let dec = 0;
+    let st = 0;
+    for (let i = 0; i < comparison.length; i++) {
+      const c = comparison[i];
+      if (c.previous && c.current) {
+        matched.push(c);
+        if (c.direction === 'up') inc++;
+        else if (c.direction === 'down') dec++;
+        else if (c.direction === 'stable') st++;
+      }
+    }
+    return { matchedItems: matched, increasedCount: inc, decreasedCount: dec, stableCount: st };
+  }, [comparison]);
 
   return (
     <div className="space-y-6">

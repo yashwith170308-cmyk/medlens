@@ -19,6 +19,10 @@ if (!fs.existsSync(dataDir)) {
 const dbPath = process.env.DB_PATH || path.join(dataDir, 'medlens.sqlite');
 export const db = new DatabaseSync(dbPath);
 
+// Safe pragmatic settings for robust concurrency (WAL omitted to avoid multi-file serverless ephemeral container locks)
+db.exec('PRAGMA busy_timeout = 5000;');
+db.exec('PRAGMA foreign_keys = ON;');
+
 // Initialize Tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -110,6 +114,14 @@ db.exec(`
     details TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE INDEX IF NOT EXISTS idx_reports_patient ON reports(patient_id);
+  CREATE INDEX IF NOT EXISTS idx_lab_results_patient ON lab_results(patient_id);
+  CREATE INDEX IF NOT EXISTS idx_lab_results_report ON lab_results(report_id);
+  CREATE INDEX IF NOT EXISTS idx_lab_results_canonical ON lab_results(canonical_name);
+  CREATE INDEX IF NOT EXISTS idx_conflicts_patient ON conflicts(patient_id);
+  CREATE INDEX IF NOT EXISTS idx_clarifications_patient ON clarifications(patient_id);
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
 `);
 
 console.log('[Database] SQLite initialized at:', dbPath);

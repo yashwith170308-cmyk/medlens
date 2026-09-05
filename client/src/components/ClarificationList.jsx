@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HelpCircle, CheckCircle2, Send, AlertCircle, MessageSquare } from 'lucide-react';
+import { HelpCircle, CheckCircle2, Send } from 'lucide-react';
 import { usePatient } from '../context/PatientContext';
 
 export default function ClarificationList() {

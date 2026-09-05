@@ -5,14 +5,42 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../services/auditLogger.js';
 
 const router = express.Router();
 
+// Cached prepared statements
+let stmts = null;
+function getStatements() {
+  if (!stmts) {
+    stmts = {
+      getCurrentPatient: db.prepare('SELECT * FROM patients ORDER BY updated_at DESC LIMIT 1'),
+      getPatientById: db.prepare('SELECT * FROM patients WHERE id = ?'),
+      getPatientExists: db.prepare('SELECT id FROM patients WHERE id = ?'),
+      updatePatient: db.prepare(`
+        UPDATE patients
+        SET name = ?, age = ?, sex = ?, symptoms = ?, conditions = ?, allergies = ?, medications = ?, notes = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `),
+      insertPatient: db.prepare(`
+        INSERT INTO patients (id, user_id, name, age, sex, symptoms, conditions, allergies, medications, notes, is_demo, created_at, updated_at)
+        VALUES (?, 'clinician-1', ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
+      `),
+      deleteLabResultsByPatient: db.prepare('DELETE FROM lab_results WHERE patient_id = ?'),
+      deleteReportsByPatient: db.prepare('DELETE FROM reports WHERE patient_id = ?'),
+      deleteConflictsByPatient: db.prepare('DELETE FROM conflicts WHERE patient_id = ?'),
+      deleteClarificationsByPatient: db.prepare('DELETE FROM clarifications WHERE patient_id = ?'),
+      deletePatientById: db.prepare('DELETE FROM patients WHERE id = ?')
+    };
+  }
+  return stmts;
+}
+
 // GET current patient (or auto-seed demo if none exist)
 router.get('/current', (req, res) => {
   try {
-    let patient = db.prepare('SELECT * FROM patients ORDER BY updated_at DESC LIMIT 1').get();
+    const s = getStatements();
+    let patient = s.getCurrentPatient.get();
 
     if (!patient) {
       const demoId = seedDemoPatient();
-      patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(demoId);
+      patient = s.getPatientById.get(demoId);
     }
 
     res.json({ patient });
@@ -25,7 +53,8 @@ router.get('/current', (req, res) => {
 // GET patient by ID
 router.get('/:id', (req, res) => {
   try {
-    const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(req.params.id);
+    const s = getStatements();
+    const patient = s.getPatientById.get(req.params.id);
     if (!patient) {
       return res.status(404).json({ error: 'Patient not found' });
     }
@@ -58,14 +87,11 @@ router.post('/', (req, res) => {
     const parsedAge = parseInt(age, 10) || 0;
     const cleanSex = sex || 'Unspecified';
 
-    const existing = db.prepare('SELECT id FROM patients WHERE id = ?').get(patientId);
+    const s = getStatements();
+    const existing = s.getPatientExists.get(patientId);
 
     if (existing) {
-      db.prepare(`
-        UPDATE patients
-        SET name = ?, age = ?, sex = ?, symptoms = ?, conditions = ?, allergies = ?, medications = ?, notes = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(
+      s.updatePatient.run(
         name.trim(),
         parsedAge,
         cleanSex,
@@ -84,10 +110,7 @@ router.post('/', (req, res) => {
         details: 'Patient intake details updated by clinician.'
       });
     } else {
-      db.prepare(`
-        INSERT INTO patients (id, user_id, name, age, sex, symptoms, conditions, allergies, medications, notes, is_demo, created_at, updated_at)
-        VALUES (?, 'clinician-1', ?, ?, ?, ?, ?, ?, ?, ?, 0, datetime('now'), datetime('now'))
-      `).run(
+      s.insertPatient.run(
         patientId,
         name.trim(),
         parsedAge,
@@ -107,7 +130,7 @@ router.post('/', (req, res) => {
       });
     }
 
-    const saved = db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId);
+    const saved = s.getPatientById.get(patientId);
     res.json({ success: true, patient: saved });
   } catch (err) {
     console.error('[PatientRoute] Error saving patient:', err);
@@ -118,8 +141,9 @@ router.post('/', (req, res) => {
 // POST seed demo patient
 router.post('/demo', (req, res) => {
   try {
+    const s = getStatements();
     const demoId = seedDemoPatient();
-    const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(demoId);
+    const patient = s.getPatientById.get(demoId);
     res.json({ success: true, patient, message: 'Synthetic demo patient loaded successfully.' });
   } catch (err) {
     console.error('[PatientRoute] Error seeding demo:', err);
@@ -131,11 +155,20 @@ router.post('/demo', (req, res) => {
 router.delete('/:id', (req, res) => {
   try {
     const patientId = req.params.id;
-    db.prepare('DELETE FROM lab_results WHERE patient_id = ?').run(patientId);
-    db.prepare('DELETE FROM reports WHERE patient_id = ?').run(patientId);
-    db.prepare('DELETE FROM conflicts WHERE patient_id = ?').run(patientId);
-    db.prepare('DELETE FROM clarifications WHERE patient_id = ?').run(patientId);
-    db.prepare('DELETE FROM patients WHERE id = ?').run(patientId);
+    const s = getStatements();
+
+    db.exec('BEGIN TRANSACTION;');
+    try {
+      s.deleteLabResultsByPatient.run(patientId);
+      s.deleteReportsByPatient.run(patientId);
+      s.deleteConflictsByPatient.run(patientId);
+      s.deleteClarificationsByPatient.run(patientId);
+      s.deletePatientById.run(patientId);
+      db.exec('COMMIT;');
+    } catch (delErr) {
+      db.exec('ROLLBACK;');
+      throw delErr;
+    }
 
     logAuditEvent({
       action: AUDIT_ACTIONS.DELETE_PATIENT,

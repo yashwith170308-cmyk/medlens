@@ -7,30 +7,81 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../services/auditLogger.js';
 
 const router = express.Router();
 
+// Cached prepared statements
+let stmts = null;
+function getStatements() {
+  if (!stmts) {
+    stmts = {
+      getPatient: db.prepare('SELECT * FROM patients WHERE id = ?'),
+      getReportsDesc: db.prepare('SELECT * FROM reports WHERE patient_id = ? ORDER BY created_at DESC'),
+      getReportsAsc: db.prepare('SELECT * FROM reports WHERE patient_id = ? ORDER BY created_at ASC'),
+      getLabResultsForRecord: db.prepare(`
+        SELECT lr.*, r.filename as report_filename, r.report_date, r.is_previous
+        FROM lab_results lr
+        LEFT JOIN reports r ON lr.report_id = r.id
+        WHERE lr.patient_id = ?
+        ORDER BY r.is_previous ASC, lr.created_at DESC
+      `),
+      getLabResultsAsc: db.prepare('SELECT * FROM lab_results WHERE patient_id = ? ORDER BY created_at ASC'),
+      getConflictsDesc: db.prepare('SELECT * FROM conflicts WHERE patient_id = ? ORDER BY created_at DESC'),
+      getClarificationsAsc: db.prepare('SELECT * FROM clarifications WHERE patient_id = ? ORDER BY created_at ASC'),
+      getLabResultById: db.prepare('SELECT * FROM lab_results WHERE id = ?'),
+      updateLabResultReview: db.prepare(`
+        UPDATE lab_results
+        SET observed_value = ?,
+            value_text = ?,
+            unit = ?,
+            reference_range_raw = ?,
+            range_low = ?,
+            range_high = ?,
+            status = ?,
+            verification_status = ?,
+            verified_by = ?,
+            verified_at = ?
+        WHERE id = ?
+      `),
+      getConflictById: db.prepare('SELECT * FROM conflicts WHERE id = ?'),
+      updateConflict: db.prepare(`
+        UPDATE conflicts
+        SET status = ?, resolution_notes = ?
+        WHERE id = ?
+      `),
+      getClarificationById: db.prepare('SELECT * FROM clarifications WHERE id = ?'),
+      updateClarification: db.prepare(`
+        UPDATE clarifications
+        SET user_response = ?
+        WHERE id = ?
+      `)
+    };
+  }
+  return stmts;
+}
+
 // GET complete structured medical record for a patient
 router.get('/patient/:patientId', async (req, res) => {
   try {
     const { patientId } = req.params;
-    const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId);
+    const s = getStatements();
+    const patient = s.getPatient.get(patientId);
     if (!patient) {
       return res.status(404).json({ error: 'Patient not found' });
     }
 
-    const reports = db.prepare('SELECT * FROM reports WHERE patient_id = ? ORDER BY created_at DESC').all(patientId);
-    const labResults = db.prepare(`
-      SELECT lr.*, r.filename as report_filename, r.report_date, r.is_previous
-      FROM lab_results lr
-      LEFT JOIN reports r ON lr.report_id = r.id
-      WHERE lr.patient_id = ?
-      ORDER BY r.is_previous ASC, lr.created_at DESC
-    `).all(patientId);
+    const reports = s.getReportsDesc.all(patientId);
+    const labResults = s.getLabResultsForRecord.all(patientId);
+    const conflicts = s.getConflictsDesc.all(patientId);
+    const clarifications = s.getClarificationsAsc.all(patientId);
 
-    const conflicts = db.prepare('SELECT * FROM conflicts WHERE patient_id = ? ORDER BY created_at DESC').all(patientId);
-    const clarifications = db.prepare('SELECT * FROM clarifications WHERE patient_id = ? ORDER BY created_at ASC').all(patientId);
-
-    // Filter current vs previous results
-    const currentResults = labResults.filter(r => !r.is_previous);
-    const previousResults = labResults.filter(r => r.is_previous);
+    // Single-pass partition: current vs previous results
+    const currentResults = [];
+    const previousResults = [];
+    for (let i = 0; i < labResults.length; i++) {
+      if (labResults[i].is_previous) {
+        previousResults.push(labResults[i]);
+      } else {
+        currentResults.push(labResults[i]);
+      }
+    }
 
     // Generate AI clinical summary with evidence bindings
     const aiSummary = await generateClinicalSummary(patient, currentResults, conflicts, reports);
@@ -45,6 +96,30 @@ router.get('/patient/:patientId', async (req, res) => {
       details: 'Structured clinical record viewed.'
     });
 
+    // Single-pass stats aggregation
+    let withinRangeCount = 0;
+    let belowRangeCount = 0;
+    let aboveRangeCount = 0;
+    let notDeterminedCount = 0;
+    let verifiedCount = 0;
+    let requiresVerificationCount = 0;
+
+    for (let i = 0; i < currentResults.length; i++) {
+      const r = currentResults[i];
+      if (r.status === 'Within reported range') withinRangeCount++;
+      else if (r.status === 'Below reported range') belowRangeCount++;
+      else if (r.status === 'Above reported range') aboveRangeCount++;
+      else if (r.status === 'Not determined') notDeterminedCount++;
+
+      if (r.verification_status === 'Human-verified') verifiedCount++;
+      else if (r.verification_status === 'Requires verification') requiresVerificationCount++;
+    }
+
+    let unresolvedConflictsCount = 0;
+    for (let i = 0; i < conflicts.length; i++) {
+      if (conflicts[i].status === 'Unresolved') unresolvedConflictsCount++;
+    }
+
     res.json({
       patient,
       reports,
@@ -57,13 +132,13 @@ router.get('/patient/:patientId', async (req, res) => {
       comparison,
       stats: {
         totalTests: currentResults.length,
-        withinRangeCount: currentResults.filter(r => r.status === 'Within reported range').length,
-        belowRangeCount: currentResults.filter(r => r.status === 'Below reported range').length,
-        aboveRangeCount: currentResults.filter(r => r.status === 'Above reported range').length,
-        notDeterminedCount: currentResults.filter(r => r.status === 'Not determined').length,
-        verifiedCount: currentResults.filter(r => r.verification_status === 'Human-verified').length,
-        requiresVerificationCount: currentResults.filter(r => r.verification_status === 'Requires verification').length,
-        unresolvedConflictsCount: conflicts.filter(c => c.status === 'Unresolved').length
+        withinRangeCount,
+        belowRangeCount,
+        aboveRangeCount,
+        notDeterminedCount,
+        verifiedCount,
+        requiresVerificationCount,
+        unresolvedConflictsCount
       }
     });
   } catch (err) {
@@ -84,7 +159,8 @@ router.patch('/results/:id/review', (req, res) => {
       verifiedBy = 'Clinician Reviewer'
     } = req.body;
 
-    const existing = db.prepare('SELECT * FROM lab_results WHERE id = ?').get(id);
+    const s = getStatements();
+    const existing = s.getLabResultById.get(id);
     if (!existing) {
       return res.status(404).json({ error: 'Laboratory result not found.' });
     }
@@ -98,20 +174,7 @@ router.patch('/results/:id/review', (req, res) => {
     // Re-evaluate reference range deterministically if value or range changed
     const evalResult = evaluateReferenceRange(finalVal, finalRange);
 
-    db.prepare(`
-      UPDATE lab_results
-      SET observed_value = ?,
-          value_text = ?,
-          unit = ?,
-          reference_range_raw = ?,
-          range_low = ?,
-          range_high = ?,
-          status = ?,
-          verification_status = ?,
-          verified_by = ?,
-          verified_at = ?
-      WHERE id = ?
-    `).run(
+    s.updateLabResultReview.run(
       evalResult.numericValue,
       String(finalVal),
       finalUnit,
@@ -132,7 +195,7 @@ router.patch('/results/:id/review', (req, res) => {
       details: `Lab result ${existing.canonical_name} updated: status=${evalResult.status}, verification=${finalStatus}.`
     });
 
-    const updated = db.prepare('SELECT * FROM lab_results WHERE id = ?').get(id);
+    const updated = s.getLabResultById.get(id);
     res.json({ success: true, labResult: updated });
   } catch (err) {
     console.error('[RecordRoute] Error in human review:', err);
@@ -150,11 +213,8 @@ router.patch('/conflicts/:id', (req, res) => {
       return res.status(400).json({ error: 'Invalid status. Must be Unresolved, Acknowledged, or Resolved.' });
     }
 
-    db.prepare(`
-      UPDATE conflicts
-      SET status = ?, resolution_notes = ?
-      WHERE id = ?
-    `).run(status, resolutionNotes || '', id);
+    const s = getStatements();
+    s.updateConflict.run(status, resolutionNotes || '', id);
 
     logAuditEvent({
       action: AUDIT_ACTIONS.RESOLVE_CONFLICT,
@@ -163,7 +223,7 @@ router.patch('/conflicts/:id', (req, res) => {
       details: `Documentation conflict marked as ${status}.`
     });
 
-    const updated = db.prepare('SELECT * FROM conflicts WHERE id = ?').get(id);
+    const updated = s.getConflictById.get(id);
     res.json({ success: true, conflict: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -176,11 +236,8 @@ router.patch('/clarifications/:id', (req, res) => {
     const { id } = req.params;
     const { response } = req.body;
 
-    db.prepare(`
-      UPDATE clarifications
-      SET user_response = ?
-      WHERE id = ?
-    `).run(response || '', id);
+    const s = getStatements();
+    s.updateClarification.run(response || '', id);
 
     logAuditEvent({
       action: AUDIT_ACTIONS.ANSWER_CLARIFICATION,
@@ -189,7 +246,7 @@ router.patch('/clarifications/:id', (req, res) => {
       details: 'Response submitted for clarification inquiry.'
     });
 
-    const updated = db.prepare('SELECT * FROM clarifications WHERE id = ?').get(id);
+    const updated = s.getClarificationById.get(id);
     res.json({ success: true, clarification: updated });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -200,11 +257,12 @@ router.patch('/clarifications/:id', (req, res) => {
 router.get('/timeline/:patientId', (req, res) => {
   try {
     const { patientId } = req.params;
-    const patient = db.prepare('SELECT * FROM patients WHERE id = ?').get(patientId);
+    const s = getStatements();
+    const patient = s.getPatient.get(patientId);
     if (!patient) return res.status(404).json({ error: 'Patient not found' });
 
-    const reports = db.prepare('SELECT * FROM reports WHERE patient_id = ? ORDER BY created_at ASC').all(patientId);
-    const labResults = db.prepare('SELECT * FROM lab_results WHERE patient_id = ? ORDER BY created_at ASC').all(patientId);
+    const reports = s.getReportsAsc.all(patientId);
+    const labResults = s.getLabResultsAsc.all(patientId);
 
     const timeline = [];
 
@@ -219,7 +277,8 @@ router.get('/timeline/:patientId', (req, res) => {
     });
 
     // Report events
-    for (const rep of reports) {
+    for (let i = 0; i < reports.length; i++) {
+      const rep = reports[i];
       timeline.push({
         id: `tl-rep-${rep.id}`,
         date: rep.report_date || rep.created_at,
@@ -231,24 +290,25 @@ router.get('/timeline/:patientId', (req, res) => {
     }
 
     // Key abnormal / uncalibrated events
-    for (const res of labResults) {
-      if (res.status === 'Below reported range' || res.status === 'Above reported range') {
+    for (let i = 0; i < labResults.length; i++) {
+      const resItem = labResults[i];
+      if (resItem.status === 'Below reported range' || resItem.status === 'Above reported range') {
         timeline.push({
-          id: `tl-res-${res.id}`,
-          date: res.created_at,
-          title: `Reported Lab Variance: ${res.canonical_name}`,
+          id: `tl-res-${resItem.id}`,
+          date: resItem.created_at,
+          title: `Reported Lab Variance: ${resItem.canonical_name}`,
           category: 'Laboratory Finding',
-          description: `Observed ${res.observed_value} ${res.unit} is ${res.status.toLowerCase()} (Reported Range: ${res.reference_range_raw}).`,
-          sourceType: res.source_type
+          description: `Observed ${resItem.observed_value} ${resItem.unit} is ${resItem.status.toLowerCase()} (Reported Range: ${resItem.reference_range_raw}).`,
+          sourceType: resItem.source_type
         });
       }
-      if (res.verification_status === 'Human-verified') {
+      if (resItem.verification_status === 'Human-verified') {
         timeline.push({
-          id: `tl-ver-${res.id}`,
-          date: res.verified_at || res.created_at,
-          title: `Result Human-Verified: ${res.canonical_name}`,
+          id: `tl-ver-${resItem.id}`,
+          date: resItem.verified_at || resItem.created_at,
+          title: `Result Human-Verified: ${resItem.canonical_name}`,
           category: 'Human Verification',
-          description: `Verified by ${res.verified_by || 'Clinician'}.`,
+          description: `Verified by ${resItem.verified_by || 'Clinician'}.`,
           sourceType: 'Human-verified'
         });
       }
